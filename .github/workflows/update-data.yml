@@ -44,39 +44,41 @@ jobs:
 
       - name: Render Quarto documents
         run: |
-          quarto render issue1_students.qmd --to html
-          quarto render issue2_voting.qmd --to html
-
-      - name: Commit and push changes
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          # Add and commit
-          git add -A
-          git diff --quiet --cached || git commit -m "Update data $(date +%Y-%m-%d)"
-          
-          # Push to main
-          git push origin main
+          quarto render
 
       - name: Deploy to gh-pages
         run: |
-          # Checkout gh-pages
+          # 保存主分支构建的文件
+          cp -r _site ../site_backup
+          
+          # 切换到 gh-pages 分支
           git fetch origin gh-pages
           git checkout gh-pages
-          git merge main --no-edit
           
-          # Render site
-          quarto render
+          # 删除旧的网站文件
+          rm -rf *.html *_files site_libs search.json .nojekyll
           
-          # Add and commit
+          # 复制新构建的网站文件
+          cp -r ../site_backup/* .
+          cp ../site_backup/.nojekyll . 2>/dev/null || true
+          
+          # 提交更改
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add -A
           git diff --quiet --cached || git commit -m "Deploy $(date +%Y-%m-%d)"
           
-          # Push
+          # 推送
           git push origin gh-pages
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push changes to main
+        run: |
+          git checkout main
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          git diff --quiet --cached || git commit -m "Update data $(date +%Y-%m-%d)"
+          git push origin main
 
   # 删除7天前的旧提交
   cleanup:
@@ -94,11 +96,17 @@ jobs:
 
       - name: Clean old commits
         run: |
-          # 删除7天前的旧提交（保留最近的提交历史）
-          git checkout --orphan temp_branch $(git rev-list --before="7 days ago" -n 1 HEAD)
-          git commit -m "Cleanup: Remove commits older than 7 days"
-          git rebase --onto temp_branch $(git rev-list --before="7 days ago" -n 1 HEAD) main
-          git branch -D temp_branch
+          # 获取7天前的提交
+          cutoff_date=$(date -d '7 days ago' +%Y-%m-%d)
+          cutoff_commit=$(git log --before="$cutoff_date" -n 1 --format=%H)
           
-          # 强制推送到远端
-          git push origin gh-pages --force
+          if [ -n "$cutoff_commit" ]; then
+            # 创建新分支，保留7天内的提交
+            git checkout --orphan new_gh_pages $cutoff_commit
+            git commit -m "Cleanup: Keep only commits from the last 7 days"
+            git branch -D gh-pages
+            git branch -m gh-pages
+            git push origin gh-pages --force
+          else
+            echo "No commits older than 7 days found"
+          fi
